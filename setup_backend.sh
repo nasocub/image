@@ -51,7 +51,7 @@ create_project_structure() {
     mkdir -p frontend_static
 
     # 创建 setup_backend.sh
-    cat <<'EOF_SETUP_BACKEND' > setup_backend.sh
+    cat <<'EOF_SETUP_BACKEND' | tr -d '\r' > setup_backend.sh
 #!/bin/bash
 
 # setup_backend.sh - This script sets up the Node.js backend for the image bed.
@@ -92,7 +92,7 @@ if [ -z "$ADMIN_RAW_PASSWORD" ]; then
 fi
 
 # Set default for CLEANUP_MONTHS if not provided or invalid
-if [ -z "$CLEANUP_MONTHS" ] || ! [[ "$CLEANUP_MONTHS" =~ ^[0-9]+$ ]]; then
+if [ -z "$CLEANUP_MONTHS" ] || ! [[ "$CLEUP_MONTHS" =~ ^[0-9]+$ ]]; then
     CLEANUP_MONTHS=0
     log_message "CLEANUP_MONTHS 未设置或无效，默认为 0 (不清理)。"
 else
@@ -725,7 +725,7 @@ EOF_SETUP_BACKEND
     chmod +x setup_backend.sh
 
     # 创建 backend/Dockerfile
-    cat <<'EOF_BACKEND_DOCKERFILE' > backend/Dockerfile
+    cat <<'EOF_BACKEND_DOCKERFILE' | tr -d '\r' > backend/Dockerfile
 # Use a Node.js base image for better compatibility and smaller size
 FROM node:18-slim
 
@@ -767,7 +767,7 @@ CMD ["/bin/bash", "-c", "cron && pm2-runtime start /app/backend/index.js --name 
 EOF_BACKEND_DOCKERFILE
 
     # 创建 .env.example
-    cat <<'EOF_ENV_EXAMPLE' > .env.example
+    cat <<'EOF_ENV_EXAMPLE' | tr -d '\r' > .env.example
 # 你的域名，例如：myimagebed.example.com
 DOMAIN=your.domain.com
 
@@ -788,7 +788,7 @@ CLEANUP_MONTHS=3
 EOF_ENV_EXAMPLE
 
     # 创建 docker-compose.yml
-    cat <<'EOF_DOCKER_COMPOSE' > docker-compose.yml
+    cat <<'EOF_DOCKER_COMPOSE' | tr -d '\r' > docker-compose.yml
 version: '3.8'
 
 services:
