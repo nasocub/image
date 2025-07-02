@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # Node.js Backend Service
+  backend:
+    build:
+      context: ./backend # Path to the backend Dockerfile
+      dockerfile: Dockerfile
+    container_name: image-bed-backend
+    # Mount the uploads directory as a named volume for persistence
+    volumes:
+      - image_bed_uploads:/app/backend/uploads
+      - ./frontend_static:/app/frontend # Mount frontend static files from backend container
+    environment:
+      # These environment variables are crucial for the Node.js backend
+      # They will override the dummy values set during Dockerfile build
+      - ALLOWED_IP=${ALLOWED_IP}
+      - ADMIN_RAW_PASSWORD=${ADMIN_RAW_PASSWORD} # Pass raw password to backend to calculate hash
+      - CLEANUP_MONTHS=${CLEANUP_MONTHS}
+      - VIRTUAL_HOST=${DOMAIN} # For nginx-proxy to route requests
+      - VIRTUAL_PORT=3000 # The port the backend listens on
+      - LETSENCRYPT_HOST=${DOMAIN} # For letsencrypt-companion
+      - LETSENCRYPT_EMAIL=${CERTBOT_EMAIL} # For letsencrypt-companion
+    # Ensure backend starts after proxy is ready (optional, but good practice)
+    depends_on:
+      - nginx-proxy
+      - letsencrypt-companion
+    restart: always # Always restart if the container stops
+
+  # Nginx Reverse Proxy Service
+  nginx-proxy:
+    image: jwilder/nginx-proxy:alpine
+    container_name: image-bed-nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro # Required for nginx-proxy to detect new containers
+      - certs:/etc/nginx/certs # Volume for SSL certificates
+      - html:/usr/share/nginx/html # Volume for static HTML (e.g., default pages)
+      - vhost.d:/etc/nginx/vhost.d # Volume for custom Nginx configurations
+      - ./frontend_static:/usr/share/nginx/html/frontend # Mount frontend static files here
+    restart: always
+
+  # Let's Encrypt Companion Service for automatic SSL
+  letsencrypt-companion:
+    image: jrcs/letsencrypt-nginx-proxy-companion
+    container_name: image-bed-letsencrypt-companion
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - certs:/etc/nginx/certs
+      - html:/usr/share/nginx/html
+      - vhost.d:/etc/nginx/vhost.d
+    depends_on:
+      - nginx-proxy # Ensure proxy is up before companion starts
+    restart: always
+
+# Define named volumes for persistence
+volumes:
+  image_bed_uploads: # For uploaded images
+  certs: # For SSL certificates managed by letsencrypt-companion
+  html: # For nginx-proxy's internal use (e.g., challenge files)
+  vhost.d: # For nginx-proxy's custom vhost configurations
+
+# Define a network (optional, but good for explicit control)
+networks:
+  default:
+    driver: bridge
