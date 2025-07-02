@@ -51,7 +51,7 @@ create_project_structure() {
     mkdir -p frontend_static
 
     # 创建 setup_backend.sh
-    cat <<'EOF_SETUP_BACKEND' | tr -d '\r' > setup_backend.sh
+    cat <<'EOF_SETUP_BACKEND_CONTENT' | tr -d '\r' > setup_backend.sh
 #!/bin/bash
 
 # setup_backend.sh - This script sets up the Node.js backend for the image bed.
@@ -92,7 +92,7 @@ if [ -z "$ADMIN_RAW_PASSWORD" ]; then
 fi
 
 # Set default for CLEANUP_MONTHS if not provided or invalid
-if [ -z "$CLEANUP_MONTHS" ] || ! [[ "$CLEANUP_MONTHS" =~ ^[0-9]+$ ]]; then # Corrected variable name here
+if [ -z "$CLEANUP_MONTHS" ] || ! [[ "$CLEANUP_MONTHS" =~ ^[0-9]+$ ]]; then
     CLEANUP_MONTHS=0
     log_message "CLEANUP_MONTHS 未设置或无效，默认为 0 (不清理)。"
 else
@@ -287,7 +287,7 @@ EOF
 # --- Deploy Frontend Code ---
 deploy_frontend_code() {
     log_message ">>> Generating frontend code (index.html, style.css, script.js)..."
-    cat <<EOF > /app/frontend/index.html
+    cat <<'EOF_FRONTEND_HTML' > /app/frontend/index.html
 <!-- index.html -->
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -368,10 +368,9 @@ deploy_frontend_code() {
     <script src="script.js"></script>
 </body>
 </html>
-EOF
-    log_message "Frontend index.html generated."
+EOF_FRONTEND_HTML
 
-    cat <<EOF > /app/frontend/style.css
+    cat <<'EOF_FRONTEND_CSS' > /app/frontend/style.css
 /* style.css */
 /* Custom Tailwind style overrides and additions */
 
@@ -434,10 +433,9 @@ input[type="file"]::file-selector-button {
     object-fit: cover; /* Cover the area, cropping if necessary */
     cursor: pointer;
 }
-EOF
-    log_message "Frontend style.css generated."
+EOF_FRONTEND_CSS
 
-    cat <<EOF > /app/frontend/script.js
+    cat <<'EOF_FRONTEND_JS' > /app/frontend/script.js
 // script.js
 document.addEventListener('DOMContentLoaded', () => {
     // --- UI Element References ---
@@ -628,7 +626,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize to show upload view
     showUploadView();
 });
-EOF
+EOF_FRONTEND_JS
     log_message "Frontend script.js generated."
     log_message "Frontend code deployed."
 }
@@ -653,7 +651,7 @@ setup_cleanup_cron() {
     # Calculate cleanUpAfterMs (milliseconds)
     local CLEANUP_AFTER_MS=$((CLEANUP_MONTHS * 30 * 24 * 60 * 60 * 1000))
 
-    cat <<EOF > /app/backend/cleanup_uploads.js
+    cat <<'EOF_CLEANUP_JS' > /app/backend/cleanup_uploads.js
 // cleanup_uploads.js
 const fs = require('fs');
 const path = require('path');
@@ -692,7 +690,7 @@ fs.readdir(uploadDir, (err, files) => {
     });
     console.log('Cleanup script execution completed.');
 });
-EOF
+EOF_CLEANUP_JS
     log_message "Cleanup script cleanup_uploads.js generated。"
     log_message "Cleanup script deployment complete。"
 }
