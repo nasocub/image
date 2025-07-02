@@ -1,5 +1,59 @@
 #!/bin/bash
 
+# install_image_bed_docker.sh - 一键安装图床 Docker 版脚本
+# 这个脚本会自动创建所需的文件和目录，并引导用户完成配置和部署。
+
+set -e
+
+# --- 配置变量 ---
+PROJECT_DIR="image-bed-app"
+LOG_FILE="/var/log/${PROJECT_DIR}_install.log"
+
+# --- 日志函数 ---
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
+}
+
+# --- 检查是否以root用户运行 ---
+if [ "$EUID" -ne 0 ]; then
+    log_message "错误：请以root用户或使用sudo运行此脚本。"
+    exit 1
+fi
+
+log_message "--- 图床 Docker 一键安装脚本开始 ---"
+log_message "本脚本将自动创建项目文件，并引导你使用 Docker Compose 部署图床应用。"
+log_message "所有安装日志将记录在 ${LOG_FILE} 文件中。"
+
+# --- 检查 Docker 和 Docker Compose 是否安装 ---
+check_docker_dependencies() {
+    log_message ">>> 检查 Docker 是否安装..."
+    if ! command -v docker &> /dev/null; then
+        log_message "错误：Docker 未安装。请访问 https://docs.docker.com/engine/install/ 安装 Docker。"
+        exit 1
+    fi
+    log_message "Docker 已安装。"
+
+    log_message ">>> 检查 Docker Compose 是否安装 (v2 版本)..."
+    if ! command -v docker compose &> /dev/null; then # 注意 v2 版本是 'docker compose'
+        log_message "错误：Docker Compose (v2) 未安装。请访问 https://docs.docker.com/compose/install/ 安装 Docker Compose。"
+        exit 1
+    fi
+    log_message "Docker Compose 已安装。"
+}
+
+# --- 创建项目目录和文件 ---
+create_project_structure() {
+    log_message ">>> 正在创建项目目录和文件..."
+    mkdir -p "$PROJECT_DIR"
+    cd "$PROJECT_DIR"
+
+    mkdir -p backend
+    mkdir -p frontend_static
+
+    # 创建 setup_backend.sh
+    cat <<'EOF_SETUP_BACKEND' > setup_backend.sh
+#!/bin/bash
+
 # setup_backend.sh - This script sets up the Node.js backend for the image bed.
 # It is designed to be run inside a Docker container during image build.
 # All configurations are read from environment variables.
@@ -541,8 +595,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             submitPasswordButton.disabled = false;
         }
-    }
-);
+    });
 
     // --- Render Image Gallery Function ---
     function renderImageGallery(imageNames) {
@@ -641,8 +694,8 @@ fs.readdir(uploadDir, (err, files) => {
     console.log('Cleanup script execution completed.');
 });
 EOF
-    log_message "Cleanup script cleanup_uploads.js generated."
-    log_message "Cleanup script deployment complete."
+    log_message "Cleanup script cleanup_uploads.js generated。"
+    log_message "Cleanup script deployment complete。"
 }
 
 # --- Main Setup Process ---
@@ -666,5 +719,193 @@ setup_cleanup_cron
 log_message "--- Image Bed Backend Setup Script Finished ---"
 log_message "The backend application and frontend static files are ready."
 log_message "You can now build your Docker image and run with Docker Compose."
+
+exit 0
+EOF_SETUP_BACKEND
+    chmod +x setup_backend.sh
+
+    # 创建 backend/Dockerfile
+    cat <<'EOF_BACKEND_DOCKERFILE' > backend/Dockerfile
+# Use a Node.js base image for better compatibility and smaller size
+FROM node:18-slim
+
+# Set working directory inside the container
+WORKDIR /app
+
+# Copy the refactored setup script and make it executable
+COPY setup_backend.sh .
+RUN chmod +x setup_backend.sh
+
+# Run the setup script to generate code, install backend npm dependencies, and PM2
+# Note: This script will generate index.js, style.css, script.js, and install npm packages.
+# We pass dummy values for DOMAIN, ALLOWED_IP, ADMIN_RAW_PASSWORD during build time.
+# These will be overridden by runtime environment variables from docker-compose.
+ENV DOMAIN="dummy.domain.com" \
+    ALLOWED_IP="127.0.0.1" \
+    ADMIN_RAW_PASSWORD="dummy_password" \
+    CLEANUP_MONTHS="0"
+RUN ./setup_backend.sh
+
+# Expose the port the Node.js app runs on
+EXPOSE 3000
+
+# Install cron for cleanup script
+RUN apt-get update && apt-get install -y cron && rm -rf /var/lib/apt/lists/*
+
+# Add cron job for cleanup script
+# This will run the cleanup script at 00:00 on the 1st day of every CLEANUP_MONTHS interval
+# We use a placeholder for CLEANUP_MONTHS here, which will be replaced during build if set,
+# or the default 0 will be used, meaning no cron job will be added unless CLEANUP_MONTHS > 0.
+# The actual value for cleanup will be read by the cleanup_uploads.js script itself from its generated content.
+RUN if [ "$CLEANUP_MONTHS" -gt 0 ]; then \
+    echo "0 0 1 */${CLEANUP_MONTHS} * node /app/backend/cleanup_uploads.js >> /var/log/image-bed-cleanup.log 2>&1" | crontab -; \
+    fi
+
+# Command to run the Node.js application using PM2 and start cron
+# pm2-runtime is designed for Docker environments
+CMD ["/bin/bash", "-c", "cron && pm2-runtime start /app/backend/index.js --name image-bed-backend"]
+EOF_BACKEND_DOCKERFILE
+
+    # 创建 .env.example
+    cat <<'EOF_ENV_EXAMPLE' > .env.example
+# 你的域名，例如：myimagebed.example.com
+DOMAIN=your.domain.com
+
+# 允许上传图片的 IP 地址。
+# 如果你想允许所有IP上传 (不推荐用于生产环境)，可以设置为 0.0.0.0
+# 如果你只允许特定IP，请填写该IP，例如：192.168.1.100
+ALLOWED_IP=your.allowed.ip.address
+
+# 查看图片列表的管理员密码。请设置一个强密码！
+ADMIN_RAW_PASSWORD=your_secure_admin_password
+
+# Certbot 注册邮箱，用于接收证书续订通知。
+CERTBOT_EMAIL=your_email@example.com
+
+# 定期清理图片的月份间隔。
+# 输入 0 或留空表示不清理。例如：3 表示每3个月清理一次。
+CLEANUP_MONTHS=3
+EOF_ENV_EXAMPLE
+
+    # 创建 docker-compose.yml
+    cat <<'EOF_DOCKER_COMPOSE' > docker-compose.yml
+version: '3.8'
+
+services:
+  # Node.js Backend Service
+  backend:
+    build:
+      context: ./backend # Path to the backend Dockerfile
+      dockerfile: Dockerfile
+    container_name: image-bed-backend
+    # Mount the uploads directory as a named volume for persistence
+    volumes:
+      - image_bed_uploads:/app/backend/uploads
+      - ./frontend_static:/app/frontend # Mount frontend static files from backend container
+    environment:
+      # These environment variables are crucial for the Node.js backend
+      # They will override the dummy values set during Dockerfile build
+      - ALLOWED_IP=${ALLOWED_IP}
+      - ADMIN_RAW_PASSWORD=${ADMIN_RAW_PASSWORD} # Pass raw password to backend to calculate hash
+      - CLEANUP_MONTHS=${CLEANUP_MONTHS}
+      - VIRTUAL_HOST=${DOMAIN} # For nginx-proxy to route requests
+      - VIRTUAL_PORT=3000 # The port the backend listens on
+      - LETSENCRYPT_HOST=${DOMAIN} # For letsencrypt-companion
+      - LETSENCRYPT_EMAIL=${CERTBOT_EMAIL} # For letsencrypt-companion
+    # Ensure backend starts after proxy is ready (optional, but good practice)
+    depends_on:
+      - nginx-proxy
+      - letsencrypt-companion
+    restart: always # Always restart if the container stops
+
+  # Nginx Reverse Proxy Service
+  nginx-proxy:
+    image: jwilder/nginx-proxy:alpine
+    container_name: image-bed-nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro # Required for nginx-proxy to detect new containers
+      - certs:/etc/nginx/certs # Volume for SSL certificates
+      - html:/usr/share/nginx/html # Volume for static HTML (e.g., default pages)
+      - vhost.d:/etc/nginx/vhost.d # Volume for custom Nginx configurations
+      - ./frontend_static:/usr/share/nginx/html/frontend # Mount frontend static files here
+    restart: always
+
+  # Let's Encrypt Companion Service for automatic SSL
+  letsencrypt-companion:
+    image: jrcs/letsencrypt-nginx-proxy-companion
+    container_name: image-bed-letsencrypt-companion
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - certs:/etc/nginx/certs
+      - html:/usr/share/nginx/html
+      - vhost.d:/etc/nginx/vhost.d
+    depends_on:
+      - nginx-proxy # Ensure proxy is up before companion starts
+    restart: always
+
+# Define named volumes for persistence
+volumes:
+  image_bed_uploads: # For uploaded images
+  certs: # For SSL certificates managed by letsencrypt-companion
+  html: # For nginx-proxy's internal use (e.g., challenge files)
+  vhost.d: # For nginx-proxy's custom vhost configurations
+
+# Define a network (optional, but good for explicit control)
+networks:
+  default:
+    driver: bridge
+EOF_DOCKER_COMPOSE
+
+    log_message "项目结构和文件创建完成。"
+}
+
+# --- 主安装流程 ---
+main_install_process() {
+    log_message "开始执行主安装流程..."
+
+    check_docker_dependencies
+    create_project_structure
+
+    echo ""
+    log_message "重要提示：请配置环境变量！"
+    log_message "已在当前目录 (${PROJECT_DIR}) 下生成 .env.example 文件。"
+    log_message "请复制该文件为 .env，并根据你的实际情况修改其中的配置项："
+    log_message "  DOMAIN：你的域名（例如：myimagebed.example.com）"
+    log_message "  ALLOWED_IP：允许上传图片的 IP 地址"
+    log_message "  ADMIN_RAW_PASSWORD：查看图片列表的管理员密码"
+    log_message "  CERTBOT_EMAIL：Certbot 注册邮箱"
+    log_message "  CLEANUP_MONTHS：定期清理图片的月份间隔"
+    echo ""
+    echo "请在继续之前，务必完成 .env 文件的配置！"
+    echo "你可以使用 'nano ${PROJECT_DIR}/.env' 或 'vi ${PROJECT_DIR}/.env' 进行编辑。"
+    echo ""
+    read -p "配置完成后，按 Enter 键继续..."
+
+    # 复制 .env.example 到 .env (如果用户没有手动创建)
+    if [ ! -f "${PROJECT_DIR}/.env" ]; then
+        log_message "未检测到 .env 文件，将从 .env.example 复制一份。"
+        cp "${PROJECT_DIR}/.env.example" "${PROJECT_DIR}/.env"
+    fi
+
+    log_message ">>> 正在启动 Docker Compose 服务..."
+    cd "$PROJECT_DIR"
+    docker compose up -d --build >> "$LOG_FILE" 2>&1 || { log_message "错误：Docker Compose 启动失败。请检查日志文件或手动运行 'docker compose up' 调试。"; exit 1; }
+    log_message "Docker Compose 服务已成功启动！"
+
+    echo ""
+    log_message "--- 图床 Docker 版部署成功！---"
+    log_message "请访问你在 .env 文件中配置的域名 (例如：https://your.domain.com) 来访问图床。"
+    log_message "请务必牢记你的管理员密码！"
+    log_message "你可以使用 'docker compose ps' 查看容器状态。"
+    log_message "你可以使用 'docker compose logs' 查看服务日志。"
+    log_message "安装脚本的完整日志位于 ${LOG_FILE}"
+    echo ""
+}
+
+# --- 执行主流程 ---
+main_install_process
 
 exit 0
